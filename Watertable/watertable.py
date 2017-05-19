@@ -53,10 +53,10 @@ if __name__ == '__main__':
     datasize = len(data)
 
     # Feature listed in here should be normalized
-    # date_recorded should be transformed to the days since it has been build
     continuous_fea = ['amount_tsh','date_recorded','gps_height','longitude',
                       'latitude','num_private','population','construction_year']
-    # date_recorded should be transformed to the days since it has been build
+
+    # date_recorded should be transformed to the days since it has been recorded
     for i in range(datasize):
         year = int(data[i]['date_recorded'][:4])
         month = int(data[i]['date_recorded'][5:7])
@@ -78,12 +78,13 @@ if __name__ == '__main__':
                     'extraction_type_class','management','management_group','payment',
                     'water_quality','quality_group','quantity','source','source_class',
                     'waterpoint_type']
+
     for feature in discrete_fea:
+
         # temp is a list of dictionary. Each dictionary only contains 1 kind feature.
-        print(feature)
-        temp = []
         temp = [ { feature : data[i][feature] } for i in range(datasize) ]
         vec = DictVectorizer()
         data_array = vec.fit_transform(temp).toarray() # can be concatenate to x_train, not yet concatenate
         data_feature = vec.get_feature_names() # can be concatenate to the featurelabel
+        print('The size of {}:  '.format(feature),end='')
         print(data_array.shape)
