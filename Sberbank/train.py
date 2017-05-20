@@ -6,7 +6,7 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.optimizers import Adam,RMSprop
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-
+import keras.backend as K
 
 ############### DataPath ################
 train_data_path = './data/train.csv'
@@ -16,6 +16,9 @@ output_path = './test/ans.csv'
 
 ############### Parameters ##############
 split_ratio = 0.2
+n = split_ratio * 30471
+nb_epoch = 15
+batch_size = 128
 
 #########################################
 ########   Utility Function     #########
@@ -128,8 +131,8 @@ def split_data(X,Y,split_ratio):
 #########   custom metrices  ########
 #####################################
 def RMSLE(y_true,y_pred):
-    
-
+    tp = K.sum(K.square(K.log(y_pred + 1) - K.log(y_true + 1)))
+    return K.sqrt(tp / n)
 
 #####################################
 ######      Main Function      ######           
@@ -137,7 +140,7 @@ def RMSLE(y_true,y_pred):
 
 def main():
     (label, feat, discrete_feat, time_feat) = read_data(train_data_path, True)
-    #( _, test_feat, _, test_time_feat) = read_data(test_data_path, False)
+    ( _, test_feat, _, test_time_feat) = read_data(test_data_path, False)
     (time_label, time_feat) = read_macro(macro_data_path)
     
     ### split data into training set and validation set
@@ -146,21 +149,51 @@ def main():
     ### model 
     model = Sequential()
     model.add(Dense(128, activation = 'relu',input_shape = (X_train.shape[1], )))
-    model.Dropout(0.2)
+    model.add(Dropout(0.2))
     model.add(Dense(128, activation = 'relu'))
-    model.Dropout(0.2)
+    model.add(Dropout(0.2))
     model.add(Dense(256, activation = 'relu'))
     model.add(Dropout(0.25))
     model.add(Dense(256, activation = 'relu'))
     model.add(Dropout(0.25))
-    model.add(Dense(1, activation = 'sigmoid'))    
-
+    model.add(Dense(1, activation = 'softplus'))    
+    model.summary()
     rmsprop = RMSprop(lr = 0.002, rho = 0.8, epsilon = 1e-7, decay = 1e-4)
     model.compile(
-        loss = 'mean_squared_logarithmatic_error',
+        loss = 'mean_squared_logarithmic_error',
         optimizer = 'rmsprop',
         metrics = [RMSLE]
     )
+    '''
+    earlystopping = EarlyStopping(
+        monitor = 'val_RMSLE',
+        patience = 10,
+        verbose = 1,
+        mode = 'max'
+    )
+    checkpoint = ModelCheckpoint(
+        filepath = 'best.hdf5',
+        verbose = 1,
+        save_best_only = True,
+        save_weights_only = True,
+        monitor = 'val_RMSLE',
+        mode = 'max'
+    )'''
+    hist = model.fit(
+        X_train, Y_train,
+        #validation = (X_val, Y_val),
+        epochs = nb_epoch,
+        batch_size = batch_size,
+        #allbacks = [earlystopping, checkpoint]
+    )
+    model.save('train.h5')
 
+    ### predict test.csv
+    test_pred = model.predict(test_feat)
+    with open (output_path, 'w') as output:
+        print('id,price_doc', file = output)
+        for i, obj in enumerate(test_pred):
+            pr = float(obj[0])
+            print(str(i+30474) + ',' + str(pr), file = output)
 if __name__ == '__main__':
     main()
