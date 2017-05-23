@@ -20,22 +20,24 @@ def main():
     parser.add_argument('--input', type=str, default='data/values.csv', help='Input file path')
     parser.add_argument('--output', type=str, default='res.csv', help='Output file path')
     parser.add_argument('--model', type=str, default='best', help='Use which model')
+    parser.add_argument('--random', action='store_true', help='Use Random Forest model')
     args = parser.parse_args()
 
     data, id_value = read_dataset(os.path.join(BASE_DIR, args.input), '')
     test_data = data[-14850:]
     id_value = id_value[-14850:]
 
-    # with open('./model/clf.pkl', 'rb') as clf_file:
-    #     clf = pickle.load(clf_file)
+    if args.random:
+        with open('./model/clf.pkl', 'rb') as clf_file:
+            clf = pickle.load(clf_file)
 
-    # res = clf.predict(test_data)
+        res = clf.predict(test_data)
+    else:
+        model = load_model(os.path.join(MODEL_DIR, "{:s}_model.hdf5".format(args.model)))
+        model.summary()
 
-    model = load_model(os.path.join(MODEL_DIR, "{:s}_model.hdf5".format(args.model)))
-    model.summary()
-
-    res = model.predict(test_data, batch_size=128)
-    res = res.argmax(axis=1)
+        res = model.predict(test_data, batch_size=128)
+        res = res.argmax(axis=1)
 
     with open(os.path.join(BASE_DIR, args.output), 'w') as output_file:
         print('id,status_group', file=output_file)

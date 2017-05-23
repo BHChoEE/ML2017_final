@@ -1,4 +1,6 @@
 data/
+model/
+res/
 
 SubmissionFormat.csv
 res.csv

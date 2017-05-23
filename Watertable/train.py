@@ -38,7 +38,6 @@ def read_dataset(value_path, label_path):
                 label.append(label_dict[row['status_group']])
 
         label = np.array(label)
-        label = to_categorical(label)
 
     # Get the feature
     # Feature listed in here is useless in my opinion or similar to other
@@ -76,6 +75,8 @@ def read_dataset(value_path, label_path):
         date = int(data[i]['date_recorded'][8:10])
         day = (30 - date) + 30 * (12 - month) + 365 * (2017 - year)
         data[i]['date_recorded'] = day
+        if float(data[i]['gps_height']) == 0:
+            data[i]['gps_height'] = 665
         if float(data[i]['longitude']) == 0:
             data[i]['longitude'] = 34.07
         if float(data[i]['latitude']) > -0.1:
@@ -105,7 +106,7 @@ def read_dataset(value_path, label_path):
         vec = DictVectorizer()
         # Can be concatenate to value, not yet concatenate
         data_array = vec.fit_transform(tmp).toarray()
-        value = np.append(value, data_array, axis=1)
+        value = np.append(value, data_array.argmax(axis=1).reshape((data_array.shape[0], 1)), axis=1)
         # Can be concatenate to the feature labels
         data_feature = vec.get_feature_names()
         # print('The size of {}: '.format(feature), end='')
@@ -126,6 +127,8 @@ def main():
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
     train_data = data[:59400]
     print(train_data.shape)
+    if not args.random:
+        train_label = to_categorical(train_label)
     indices = np.random.permutation(train_data.shape[0])
     train_data = train_data[indices]
     train_label = train_label[indices]
@@ -137,7 +140,10 @@ def main():
     y_val = train_label[-nb_validation_samples:]
 
     if args.random:
-        clf = RandomForestClassifier(n_estimators=1000, n_jobs=-1)
+        clf = RandomForestClassifier(min_samples_split=8,
+                                     n_estimators=1000,
+                                     oob_score=True,
+                                     n_jobs=-1)
         clf.fit(x_train, y_train)
         train_ans = clf.predict(x_train)
         val_ans = clf.predict(x_val)
@@ -159,14 +165,14 @@ def main():
 
         model_name = os.path.join(MODEL_DIR, "{epoch:02d}_model.hdf5")
         checkpoint = ModelCheckpoint(model_name, monitor='val_acc', verbose=0,
-                                    save_best_only=True, mode='max')
+                                     save_best_only=True, mode='max')
         callbacks_list = [checkpoint]
 
         model.fit(x_train, y_train,
-                epochs=300,
-                batch_size=128,
-                validation_data=(x_val, y_val),
-                callbacks=callbacks_list)
+                  epochs=300,
+                  batch_size=128,
+                  validation_data=(x_val, y_val),
+                  callbacks=callbacks_list)
 
 if __name__ == '__main__':
 
