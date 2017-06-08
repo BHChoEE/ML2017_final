@@ -117,9 +117,7 @@ def get_best_model(train, test, city):
 	if score < best_score:
 			best_alpha = alpha
 			best_score = score
-	#print('best alpha = ', best_alpha)
-	#print('best score = ', best_score)
-       
+	   
     # Step 3: refit on entire dataset
 	full_dataset = pd.concat([train, test])
 	model = smf.glm(formula=model_formula,
@@ -138,23 +136,7 @@ def main():
 	# load the provided data
 	train_features_path = os.path.join(data_path,'dengue_features_train.csv')
 	train_labels_path = os.path.join(data_path,'dengue_labels_train.csv')
-	train_features = pd.read_csv(train_features_path,index_col=[0,1,2])
-	train_labels = pd.read_csv(train_labels_path,index_col=[0,1,2])
-	# Seperate data for San Juan
-	sj_train_features = train_features.loc['sj']
-	sj_train_labels = train_labels.loc['sj']
-	# Separate data for Iquitos
-	iq_train_features = train_features.loc['iq']
-	iq_train_labels = train_labels.loc['iq']
-
-	# Remove 'week_start_date' string.
-	sj_train_features.drop('week_start_date', axis=1, inplace=True)
-	iq_train_features.drop('week_start_date', axis=1, inplace=True)
-
-	#find NaN in data be unsatisfying and eliminate those ddata
-	sj_train_features.fillna(method='ffill', inplace=True)
-	iq_train_features.fillna(method='ffill', inplace=True)
-
+	
 	### pre-processing data
 	sj_train, iq_train = preprocess_data(train_features_path, labels_path = train_labels_path)
 	#print(sj_train.describe())
@@ -167,24 +149,23 @@ def main():
 	sj_train = sj_train.assign(negbi = 0)
 	sj_train = sj_train.assign(gb = 0)
 	loop = 1
-	for train_index, test_index in kf.split(sj_train):
-		#print("TRAIN:", train_index, "TEST:", test_index)
-		X_train,X_test = sj_train.ix[train_index], sj_train.ix[test_index]
-		###neg_binomial method
-		sj_best_model = get_best_model(X_train, X_test,'sj')
-		predictions_neg = sj_best_model.predict(X_test).astype(int)
+	for train_index, val_index in kf.split(sj_train): #The index will be split into [train_index] and [val_index] 
+		X_train,X_val = sj_train.ix[train_index], sj_train.ix[val_index]
+		###(1)neg_binomial method
+		sj_best_model = get_best_model(X_train, X_val,'sj')
+		predictions_neg = sj_best_model.predict(X_val).astype(int)
 		#Shift the prediction manually
 		for i in range(predictions_neg.shape[0]-1,3,-1):
 			predictions_neg.ix[i] = predictions_neg.ix[i-4]
 		
-		###gradient boosting method
+		###(2)gradient boosting method
 		clf_sj = gradient_boosting(X_train.drop(['negbi','gb'],axis = 1)
-			,X_test.drop(['negbi','gb'],axis = 1))	
-		predictions_gb = clf_sj.predict(X_test.drop(['total_cases','negbi','gb'],axis = 1)).astype(int)
+			,X_val.drop(['negbi','gb'],axis = 1))	
+		predictions_gb = clf_sj.predict(X_val.drop(['total_cases','negbi','gb'],axis = 1)).astype(int)
 		
-		###Store the result in sj_train
+		###Store the result in sj_train  predictions_neg -> 'negbi', predictions_gb -> 'gb'
 		print("Adding the result of the predictions to sj training data({}/{})".format(loop,6))
-		for idx,index in enumerate(test_index):
+		for idx,index in enumerate(val_index):
 			sj_train['negbi'].ix[index] = predictions_neg.ix[idx]
 			sj_train['gb'].ix[index] = predictions_gb[idx]	
 		loop += 1	
@@ -192,28 +173,96 @@ def main():
 	iq_train = iq_train.assign(negbi = 0)
 	iq_train = iq_train.assign(gb = 0)
 	loop = 1
-	for train_index, test_index in kf.split(iq_train):
-		X_train,X_test = iq_train.ix[train_index], iq_train.ix[test_index]
+	for train_index, val_index in kf.split(iq_train):
+		X_train,X_val = iq_train.ix[train_index], iq_train.ix[val_index]
 		
-		###neg_binomial method
-		iq_best_model = get_best_model(X_train, X_test,'iq')
-		predictions_neg = iq_best_model.predict(X_test).astype(int)
+		###(1)neg_binomial method
+		iq_best_model = get_best_model(X_train, X_val,'iq')
+		predictions_neg = iq_best_model.predict(X_val).astype(int)
 		#Shift the prediction manually
 		for i in range(predictions_neg.shape[0]-1,0,-1):
 			predictions_neg.ix[i] = predictions_neg.ix[i-1]
 		
-		###gradient boosting method
+		###(2)gradient boosting method
 		clf_iq = gradient_boosting(X_train.drop(['negbi','gb'],axis = 1),
-			X_test.drop(['negbi','gb'],axis = 1))
-		predictions_gb = clf_iq.predict(X_test.drop(['total_cases','negbi','gb'],axis = 1)).astype(int)
-		###Store the result in iq_train
-
+			X_val.drop(['negbi','gb'],axis = 1))
+		predictions_gb = clf_iq.predict(X_val.drop(['total_cases','negbi','gb'],axis = 1)).astype(int)
+		
+		###Store the result in iq_train predictions_neg -> 'negbi', predictions_gb -> 'gb'
 		print("Adding the result of the predictions to iq training data({}/{})".format(loop,6))
-		for idx,index in enumerate(test_index):
+		for idx,index in enumerate(val_index):
 			iq_train['negbi'].ix[index] = predictions_neg.ix[idx]
 			iq_train['gb'].ix[index] = predictions_gb[idx]	
 		loop += 1
 	
+	###Now the training data looks like [feature, total_cases, negbi, gb]
+
+	##Accessing testing data
+	test_features_path = os.path.join(data_path,'dengue_features_test.csv')
+	sj_test, iq_test = preprocess_data(test_features_path)
+	##Like training, add 'negbi' and 'gb' to the testing dataframe
+	sj_test = sj_test.assign(negbi = 0)
+	sj_test = sj_test.assign(gb = 0)
+	##(1)neg_binomial prediction
+	sj_predictions_neg = sj_best_model.predict(sj_test).astype(int)
+	for i in range(sj_predictions_neg.shape[0]-1,3,-1):
+			sj_predictions_neg.ix[i] = sj_predictions_neg.ix[i-4]
+	##(2)gradient boosting prediction
+	sj_predictions_gb = clf_sj.predict(sj_test.drop(['negbi','gb'],axis = 1)).astype(int)
+	print("Adding predictions as features to sj testing data...")
+	for i in range(len(sj_test['negbi'])): #Add the prediction to the corresponding column 
+			sj_test['negbi'].ix[i] = sj_predictions_neg.ix[i]
+			sj_test['gb'].ix[i] = sj_predictions_gb[i]	
+	##Same process as city sj
+	iq_test = iq_test.assign(negbi = 0)
+	iq_test = iq_test.assign(gb = 0)
+	iq_predictions_neg = iq_best_model.predict(iq_test).astype(int)
+	for i in range(iq_predictions_neg.shape[0]-1,0,-1):
+			iq_predictions_neg.ix[i] = iq_predictions_neg.ix[i-1]
+	iq_predictions_gb = clf_iq.predict(iq_test.drop(['negbi','gb'],axis = 1)).astype(int)
+	print("Adding predictions as features to iq testing data...")
+	for i in range(len(iq_test['negbi'])):
+			iq_test['negbi'].ix[i] = iq_predictions_neg.ix[i]
+			iq_test['gb'].ix[i] = iq_predictions_gb[i]	
+
+	##use new information to run a linear regression
+	print("Building linear regression model...")
+	#Now the linear regression model uses (X = [features, negbi, gb], y = total_cases )to train(fit)
+	sj_lr = LR()
+	sj_lr.fit(sj_train.drop('total_cases',axis = 1),sj_train['total_cases'])
+	iq_lr = LR()
+	iq_lr.fit(iq_train.drop('total_cases',axis = 1),iq_train['total_cases'])
+	
+	#Calculate the k-fold validation error
+	sj_score = []
+	for train_index, val_index in kf.split(sj_train):
+		X_train,X_val = sj_train.ix[train_index], sj_train.ix[val_index]
+		train_predict = np.array(sj_lr.predict(X_val.drop('total_cases',axis = 1))).astype(int)
+		sj_score.append(eval_measures.meanabs(train_predict, X_val.total_cases))
+	print("Mean of {} cross validation of sj_score is {} (+/- {})".format(kf.get_n_splits(sj_train)
+																,np.mean(sj_score),np.std(sj_score)))
+	
+	iq_score = []
+	for train_index, val_index in kf.split(iq_train):
+		X_train,X_val = iq_train.ix[train_index], iq_train.ix[val_index]
+		train_predict = np.array(iq_lr.predict(X_val.drop('total_cases',axis = 1))).astype(int)
+		iq_score.append(eval_measures.meanabs(train_predict, X_val.total_cases))
+	print("Mean of {} cross validation of iq_score is {} (+/- {})".format(kf.get_n_splits(iq_train)
+																,np.mean(iq_score),np.std(iq_score)))
+	
+	##Use the model sj_lr and iq_lr trained before to predict the testing data
+	print("Predicting testing data...")
+	sj_predictions = sj_lr.predict(sj_test)
+	iq_predictions = iq_lr.predict(iq_test)
+	sj_predictions = np.array(sj_predictions).astype(int)
+	iq_predictions = np.array(iq_predictions).astype(int)
+	
+	print("Creating submit file...")
+	##Use submission_format as template to write the answer
+	sample_path = os.path.join(data_path,'submission_format.csv')
+	submission = pd.read_csv(sample_path,index_col=[0, 1, 2])
+	submission.total_cases = np.concatenate([sj_predictions, iq_predictions])
+	submission.to_csv("./data/stacking_negbi_gb_less.csv")
 	
 	'''
 	##plotting but not update haha
@@ -241,66 +290,6 @@ def main():
 	plt.legend()
 	plt.show()
 	'''
-	test_features_path = os.path.join(data_path,'dengue_features_test.csv')
-	sj_test, iq_test = preprocess_data(test_features_path)
-	sj_test = sj_test.assign(negbi = 0)
-	sj_test = sj_test.assign(gb = 0)
-	sj_predictions_neg = sj_best_model.predict(sj_test).astype(int)
-	for i in range(sj_predictions_neg.shape[0]-1,3,-1):
-			sj_predictions_neg.ix[i] = sj_predictions_neg.ix[i-4]
-	sj_predictions_gb = clf_iq.predict(sj_test.drop(['negbi','gb'],axis = 1)).astype(int)
-	print("Adding predictions as features to sj testing data...")
-	for i in range(len(sj_test['negbi'])):
-			sj_test['negbi'].ix[i] = sj_predictions_neg.ix[i]
-			sj_test['gb'].ix[i] = sj_predictions_gb[i]	
-	
-	iq_test = iq_test.assign(negbi = 0)
-	iq_test = iq_test.assign(gb = 0)
-	iq_predictions_neg = iq_best_model.predict(iq_test).astype(int)
-	for i in range(iq_predictions_neg.shape[0]-1,0,-1):
-			iq_predictions_neg.ix[i] = iq_predictions_neg.ix[i-1]
-	iq_predictions_gb = clf_iq.predict(iq_test.drop(['negbi','gb'],axis = 1)).astype(int)
-	print("Adding predictions as features to iq testing data...")
-	for i in range(len(iq_test['negbi'])):
-			iq_test['negbi'].ix[i] = iq_predictions_neg.ix[i]
-			iq_test['gb'].ix[i] = iq_predictions_gb[i]	
-
-	##use new information to run a linear regression
-	print("Building linear regression model...")
-	
-	sj_train_lr = LR()
-	sj_train_lr.fit(sj_train.drop('total_cases',axis = 1),sj_train['total_cases'])
-	iq_train_lr = LR()
-	iq_train_lr.fit(iq_train.drop('total_cases',axis = 1),iq_train['total_cases'])
-	
-	sj_score = []
-	for train_index, test_index in kf.split(sj_train):
-		X_train,X_test = sj_train.ix[train_index], sj_train.ix[test_index]
-		train_predict = np.array(sj_train_lr.predict(X_test.drop('total_cases',axis = 1))).astype(int)
-		sj_score.append(eval_measures.meanabs(train_predict, X_test.total_cases))
-	
-	print("Mean of {} cross validation of sj_score is {} (+/- {})".format(kf.get_n_splits(sj_train)
-																,np.mean(sj_score),np.std(sj_score)))
-	
-	iq_score = []
-	for train_index, test_index in kf.split(iq_train):
-		X_train,X_test = iq_train.ix[train_index], iq_train.ix[test_index]
-		train_predict = np.array(iq_train_lr.predict(X_test.drop('total_cases',axis = 1))).astype(int)
-		iq_score.append(eval_measures.meanabs(train_predict, X_test.total_cases))
-	print("Mean of {} cross validation of iq_score is {} (+/- {})".format(kf.get_n_splits(iq_train)
-																,np.mean(iq_score),np.std(iq_score)))
-	
-	sj_predictions = sj_train_lr.predict(sj_test)
-	iq_predictions = iq_train_lr.predict(iq_test)
-	sj_predictions = np.array(sj_predictions).astype(int)
-	iq_predictions = np.array(iq_predictions).astype(int)
-	
-	print("Creating submit file...")
-	sample_path = os.path.join(data_path,'submission_format.csv')
-	submission = pd.read_csv(sample_path,index_col=[0, 1, 2])
-	submission.total_cases = np.concatenate([sj_predictions, iq_predictions])
-	submission.to_csv("./data/stacking_negbi_gb_less.csv")
-	
 
 if __name__ == '__main__':
 	main()
