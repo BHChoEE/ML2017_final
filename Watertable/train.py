@@ -17,8 +17,9 @@ from keras.utils import to_categorical
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.callbacks import ModelCheckpoint
+import xgboost as xgb
 
-VALIDATION_SPLIT = 0.2
+VALIDATION_SPLIT = 0.1
 DROPOUT_RATE = 0.3
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -41,8 +42,8 @@ def read_dataset(value_path, label_path):
 
     # Get the feature
     # Feature listed in here is useless in my opinion or similar to other
-    useless_features = ['id', 'funder', 'recorded_by', 'extraction_type_group',
-                        'payment', 'quantity_group', 'source_type',
+    useless_features = ['id', 'recorded_by', 'extraction_type_group',
+                        'quantity_group', 'source_type',
                         'waterpoint_type_group', 'wpt_name', 'subvillage']
     data = []
     id_value = []
@@ -83,6 +84,8 @@ def read_dataset(value_path, label_path):
             data[i]['latitude'] = -5.7
         if float(data[i]['construction_year']) == 0:
             data[i]['construction_year'] = 1960
+        if float(data[i]['construction_year']) >= 1960:
+            data[i]['construction_year'] = float(data[i]['construction_year']) - 1960
 
     # Normalization
     tmp = [[data[i][feature] for feature in continuous_features]
@@ -92,13 +95,13 @@ def read_dataset(value_path, label_path):
     std = np.std(tmp, axis=0)
     # This array can be then concatenate with one-hot encoded discrete data
     norm_data = (tmp - mean) / std
-    value = norm_data
+    # value = norm_data
+    value = tmp
 
     # Other Feature is discrete and should be dealed with one-hot encoding
-    discrete_features = ['basin', 'lga', 'public_meeting', 'scheme_management', 'permit',
-                         'extraction_type', 'region', 'extraction_type_class', 'management',
-                         'management_group', 'payment_type', 'water_quality', 'quantity',
-                         'source', 'source_class', 'waterpoint_type']
+    discrete_features = ['basin', 'lga', 'public_meeting', 'permit', 'funder',
+                         'extraction_type_class', 'management', 'management_group',
+                         'quantity', 'source', 'source_class', 'waterpoint_type', 'payment']
 
     for feature in discrete_features:
         # Temp is a list of dictionary. Each dictionary only contains 1 kind of feature
@@ -106,7 +109,10 @@ def read_dataset(value_path, label_path):
         vec = DictVectorizer()
         # Can be concatenate to value, not yet concatenate
         data_array = vec.fit_transform(tmp).toarray()
+        # Single integer to represent discrete features
         value = np.append(value, data_array.argmax(axis=1).reshape((data_array.shape[0], 1)), axis=1)
+        # One hot vector to represent discrete features
+        # value = np.append(value, data_array, axis=1)
         # Can be concatenate to the feature labels
         data_feature = vec.get_feature_names()
         # print('The size of {}: '.format(feature), end='')
@@ -121,13 +127,14 @@ def main():
     """ Main function """
     parser = ArgumentParser()
     parser.add_argument('--random', action='store_true', help='Use Random Forest model')
+    parser.add_argument('--xgb', action='store_true', help='Use XGBoost model')
     args = parser.parse_args()
 
     data, train_label = read_dataset(os.path.join(BASE_DIR, 'data/values.csv'),
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
     train_data = data[:59400]
     print(train_data.shape)
-    if not args.random:
+    if not args.random and not args.xgb:
         train_label = to_categorical(train_label)
     indices = np.random.permutation(train_data.shape[0])
     train_data = train_data[indices]
@@ -136,6 +143,9 @@ def main():
 
     x_train = train_data[:-nb_validation_samples]
     y_train = train_label[:-nb_validation_samples]
+    # Use all training data
+    # x_train = train_data
+    # y_train = train_label
     x_val = train_data[-nb_validation_samples:]
     y_val = train_label[-nb_validation_samples:]
 
@@ -150,6 +160,52 @@ def main():
         with open('./model/clf.pkl', 'wb') as clf_file:
             pickle.dump(clf, clf_file)
 
+        print("Training accuracy: {:f}".format(accuracy_score(y_train, train_ans)))
+        print("Validation accuracy: {:f}".format(accuracy_score(y_val, val_ans)))
+    elif args.xgb:
+        xgb_params = {
+            'objective': 'multi:softmax',
+            'booster': 'gbtree',
+            'eval_metric': 'merror',
+            'num_class': 3,
+            'eta': .2,
+            'max_depth': 12,
+            'colsample_bytree': .4,
+        }
+        xgb_params_1 = {
+            'objective': 'multi:softmax',
+            'booster': 'gbtree',
+            'eval_metric': 'merror',
+            'num_class': 3,
+            'eta': .2,
+            'max_depth': 14,
+            'colsample_bytree': .4,
+        }
+        dtrain = xgb.DMatrix(data=x_train, label=y_train)
+        dxtrain = xgb.DMatrix(x_train)
+        dval = xgb.DMatrix(x_val)
+        for i in range(12):
+            cv_model = xgb.cv(dict(xgb_params), dtrain, num_boost_round=500, early_stopping_rounds=10, nfold=4, seed=i)
+            min_idx = np.argmin(cv_model['test-merror-mean'].values) + 1
+            model = xgb.train(dict(xgb_params_1), dtrain, num_boost_round=min_idx)
+            model.save_model("xgb.model_{:d}".format(i))
+            if i == 0:
+                train_ans = model.predict(dxtrain).reshape(x_train.shape[0], 1)
+                val_ans = model.predict(dval).reshape(x_val.shape[0], 1)
+            else:
+                train_ans = np.append(train_ans, model.predict(dxtrain).reshape(x_train.shape[0], 1), axis=1)
+                val_ans = np.append(val_ans, model.predict(dval).reshape(x_val.shape[0], 1), axis=1)
+
+        for idx, arr in enumerate(train_ans):
+            tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
+            train_ans[idx] = tmp.argmax()
+
+        for idx, arr in enumerate(val_ans):
+            tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
+            val_ans[idx] = tmp.argmax()
+
+        train_ans = train_ans[:, 0]
+        val_ans = val_ans[:, 0]
         print("Training accuracy: {:f}".format(accuracy_score(y_train, train_ans)))
         print("Validation accuracy: {:f}".format(accuracy_score(y_val, val_ans)))
     else:
