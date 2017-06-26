@@ -8,7 +8,9 @@ Testing Part
 import os
 import pickle
 from argparse import ArgumentParser
+import numpy as np
 from keras.models import load_model
+import xgboost as xgb
 from train import read_dataset
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -21,6 +23,7 @@ def main():
     parser.add_argument('--output', type=str, default='res.csv', help='Output file path')
     parser.add_argument('--model', type=str, default='best', help='Use which model')
     parser.add_argument('--random', action='store_true', help='Use Random Forest model')
+    parser.add_argument('--xgb', action='store_true', help='Use XGBoost model')
     args = parser.parse_args()
 
     data, id_value = read_dataset(os.path.join(BASE_DIR, args.input), '')
@@ -32,6 +35,30 @@ def main():
             clf = pickle.load(clf_file)
 
         res = clf.predict(test_data)
+    elif args.xgb:
+        dxtest = xgb.DMatrix(test_data)
+        for i in range(12):
+            xgb_params = {
+                'objective': 'multi:softmax',
+                'booster': 'gbtree',
+                'eval_metric': 'merror',
+                'num_class': 3,
+                'eta': .2,
+                'max_depth': 14,
+                'colsample_bytree': .4,
+            }
+            model = xgb.Booster(dict(xgb_params))
+            model.load_model("xgb.model_{:d}".format(i))
+            if i == 0:
+                res = model.predict(dxtest).reshape(test_data.shape[0], 1)
+            else:
+                res = np.append(res, model.predict(dxtest).reshape(test_data.shape[0], 1), axis=1)
+
+        for idx, arr in enumerate(res):
+            tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
+            res[idx] = tmp.argmax()
+        
+        res = res[:, 0]
     else:
         model = load_model(os.path.join(MODEL_DIR, "{:s}_model.hdf5".format(args.model)))
         model.summary()
