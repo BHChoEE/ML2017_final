@@ -19,6 +19,8 @@ from keras.layers import Dense, Dropout
 from keras.callbacks import ModelCheckpoint
 import xgboost as xgb
 
+np.random.seed(0)
+
 VALIDATION_SPLIT = 0.1
 DROPOUT_RATE = 0.3
 
@@ -42,9 +44,11 @@ def read_dataset(value_path, label_path):
 
     # Get the feature
     # Feature listed in here is useless in my opinion or similar to other
-    useless_features = ['id', 'recorded_by', 'extraction_type_group',
-                        'quantity_group', 'source_type',
-                        'waterpoint_type_group', 'wpt_name', 'subvillage']
+    useless_features = ['id', 'installer', 'wpt_name', 'num_private', 'subvillage',
+                        'region', 'region_code', 'district_code', 'ward', 'recorded_by',
+                        'scheme_name', 'extraction_type', 'extraction_type_group',
+                        'management_group', 'payment_type', 'water_quality', 'quantity_group',
+                        'source_type', 'waterpoint_type_group']
     data = []
     id_value = []
     with open(value_path, 'r') as dat_file:
@@ -77,13 +81,13 @@ def read_dataset(value_path, label_path):
         day = (30 - date) + 30 * (12 - month) + 365 * (2017 - year)
         data[i]['date_recorded'] = day
         if float(data[i]['gps_height']) == 0:
-            data[i]['gps_height'] = 665
+            data[i]['gps_height'] = 1016.97
         if float(data[i]['longitude']) == 0:
-            data[i]['longitude'] = 34.07
+            data[i]['longitude'] = 35.15
         if float(data[i]['latitude']) > -0.1:
-            data[i]['latitude'] = -5.7
+            data[i]['latitude'] = -5.88
         if float(data[i]['construction_year']) == 0:
-            data[i]['construction_year'] = 1960
+            data[i]['construction_year'] = 1997
         if float(data[i]['construction_year']) >= 1960:
             data[i]['construction_year'] = float(data[i]['construction_year']) - 1960
 
@@ -95,13 +99,14 @@ def read_dataset(value_path, label_path):
     std = np.std(tmp, axis=0)
     # This array can be then concatenate with one-hot encoded discrete data
     norm_data = (tmp - mean) / std
-    # value = norm_data
-    value = tmp
+    value = norm_data
+    # value = tmp
 
     # Other Feature is discrete and should be dealed with one-hot encoding
-    discrete_features = ['basin', 'lga', 'public_meeting', 'permit', 'funder',
-                         'extraction_type_class', 'management', 'management_group',
-                         'quantity', 'source', 'source_class', 'waterpoint_type', 'payment']
+    discrete_features = ['funder', 'basin', 'lga', 'public_meeting', 'scheme_management',
+                         'permit', 'extraction_type_class', 'management', 'payment',
+                         'quality_group', 'quantity', 'source', 'source_class',
+                         'waterpoint_type']
 
     for feature in discrete_features:
         # Temp is a list of dictionary. Each dictionary only contains 1 kind of feature
@@ -168,26 +173,19 @@ def main():
             'booster': 'gbtree',
             'eval_metric': 'merror',
             'num_class': 3,
-            'eta': .2,
-            'max_depth': 12,
-            'colsample_bytree': .4,
-        }
-        xgb_params_1 = {
-            'objective': 'multi:softmax',
-            'booster': 'gbtree',
-            'eval_metric': 'merror',
-            'num_class': 3,
-            'eta': .2,
+            'learning_rate': .1,
             'max_depth': 14,
             'colsample_bytree': .4,
+            'colsample_bylevel': .4
         }
         dtrain = xgb.DMatrix(data=x_train, label=y_train)
         dxtrain = xgb.DMatrix(x_train)
         dval = xgb.DMatrix(x_val)
-        for i in range(12):
-            cv_model = xgb.cv(dict(xgb_params), dtrain, num_boost_round=500, early_stopping_rounds=10, nfold=4, seed=i)
-            min_idx = np.argmin(cv_model['test-merror-mean'].values) + 1
-            model = xgb.train(dict(xgb_params_1), dtrain, num_boost_round=min_idx)
+        for i in range(21):
+            # cv_model = xgb.cv(dict(xgb_params), dtrain, num_boost_round=500, early_stopping_rounds=10, nfold=4, seed=i)
+            # min_idx = np.argmin(cv_model['test-merror-mean']) + 1
+            # model = xgb.train(dict(xgb_params), dtrain, num_boost_round=min_idx)
+            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1200)
             model.save_model("xgb.model_{:d}".format(i))
             if i == 0:
                 train_ans = model.predict(dxtrain).reshape(x_train.shape[0], 1)

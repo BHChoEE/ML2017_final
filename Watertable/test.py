@@ -37,15 +37,16 @@ def main():
         res = clf.predict(test_data)
     elif args.xgb:
         dxtest = xgb.DMatrix(test_data)
-        for i in range(12):
+        for i in range(21):
             xgb_params = {
                 'objective': 'multi:softmax',
                 'booster': 'gbtree',
                 'eval_metric': 'merror',
                 'num_class': 3,
-                'eta': .2,
+                'eta': .1,
                 'max_depth': 14,
                 'colsample_bytree': .4,
+                'colsample_bylevel': .4,
             }
             model = xgb.Booster(dict(xgb_params))
             model.load_model("xgb.model_{:d}".format(i))
