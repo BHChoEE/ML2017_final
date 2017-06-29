@@ -8,6 +8,7 @@ Training Part
 import os
 import csv
 import pickle
+import pandas as pd
 from argparse import ArgumentParser
 import numpy as np
 from sklearn.feature_extraction import DictVectorizer
@@ -18,6 +19,8 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.callbacks import ModelCheckpoint
 import xgboost as xgb
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 np.random.seed(0)
 
@@ -133,10 +136,38 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--random', action='store_true', help='Use Random Forest model')
     parser.add_argument('--xgb', action='store_true', help='Use XGBoost model')
+    parser.add_argument('--heatmap', action='store_true', help='Plot the corr heat map')
+    
     args = parser.parse_args()
 
     data, train_label = read_dataset(os.path.join(BASE_DIR, 'data/values.csv'),
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
+
+    if args.heatmap:
+        feature_list = ['amount_tsh', 'date_recorded', 'gps_height', 'longitude',
+                               'latitude', 'population', 'construction_year',
+                               'funder', 'basin', 'lga', 'public_meeting', 'scheme_management',
+                             'permit', 'extraction_type_class', 'management', 'payment',
+                             'quality_group', 'quantity', 'source', 'source_class','waterpoint_type']
+        
+        construct = [(feature_list[i],data[:,i]) for i in range(len(feature_list))]
+        plot_data = pd.DataFrame.from_items(construct)
+        label = pd.DataFrame({'status_group':train_label})        
+    
+        plot_data = pd.concat([plot_data,label],axis = 1)
+        colormap = plt.cm.viridis
+        
+        fig,ax = plt.subplots(figsize=(12,12))
+        plt.title('Correlation coefficient map of Features', y=1.05, size=30)
+        sns.heatmap(plot_data.corr().round(3),linewidths=0.1,vmax=1.0, square=True,annot_kws={"size":8}
+            , cmap=colormap, linecolor='white', annot=True,ax = ax)
+        ax.set_xticklabels(plot_data.columns,rotation=90)
+        ax.set_yticklabels(plot_data.columns[::-1],rotation=0)
+        plt.tight_layout()
+        #plt.show()
+        fig.savefig('feature_heatmap.png',dpi = 300)
+
+    
     train_data = data[:59400]
     print(train_data.shape)
     if not args.random and not args.xgb:
@@ -154,7 +185,7 @@ def main():
     x_val = train_data[-nb_validation_samples:]
     y_val = train_label[-nb_validation_samples:]
 
-    if args.random:
+    elif args.random:
         clf = RandomForestClassifier(min_samples_split=8,
                                      n_estimators=1000,
                                      oob_score=True,
@@ -227,7 +258,7 @@ def main():
                   batch_size=128,
                   validation_data=(x_val, y_val),
                   callbacks=callbacks_list)
-
+    
 if __name__ == '__main__':
 
     main()
