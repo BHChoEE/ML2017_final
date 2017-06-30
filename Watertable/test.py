@@ -6,15 +6,115 @@ Testing Part
 """
 
 import os
+import csv
 import pickle
 from argparse import ArgumentParser
+from sklearn.feature_extraction import DictVectorizer
 import numpy as np
 from keras.models import load_model
 import xgboost as xgb
-from train import read_dataset
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, 'model')
+
+def read_dataset(value_path, label_path):
+    """ Read and process dataset """
+    # Get label
+    if label_path:
+        label_dict = {'functional': 0, 'non functional': 1,
+                      'functional needs repair': 2}
+        label = []
+        with open(label_path, 'r') as lab_file:
+            for row in csv.DictReader(lab_file):
+                label.append(label_dict[row['status_group']])
+
+        label = np.array(label)
+
+    # Get the feature
+    # Feature listed in here is useless in my opinion or similar to other
+    useless_features = ['id', 'installer', 'wpt_name', 'num_private', 'subvillage',
+                        'region', 'region_code', 'district_code', 'ward', 'recorded_by',
+                        'scheme_name', 'extraction_type', 'extraction_type_group',
+                        'management_group', 'payment_type', 'water_quality', 'quantity_group',
+                        'source_type', 'waterpoint_type_group']
+    data = []
+    id_value = []
+    with open(value_path, 'r') as dat_file:
+        for i, row in enumerate(csv.reader(dat_file)):
+            if i == 0:
+                feature_type = row
+                feature_dict = {
+                    feature_type[k]: k for k in range(len(feature_type))}
+                for key in useless_features:
+                    del feature_dict[key]
+            else:
+                # Data is a list with each element is a dictionary
+                # Feature can be accessed with data[i][feature]
+                data.append({key: row[value]
+                             for key, value in feature_dict.items()})
+                id_value.append(row[0])
+
+    data_size = len(data)
+
+    # Feature listed in here should be normalized
+    continuous_features = ['amount_tsh', 'date_recorded', 'gps_height', 'longitude',
+                           'latitude', 'population', 'construction_year']
+
+    # date_recorded should be transformed to the days since it has been recorded
+    # Fill some missing data with average value
+    for i in range(data_size):
+        year = int(data[i]['date_recorded'][:4])
+        month = int(data[i]['date_recorded'][5:7])
+        date = int(data[i]['date_recorded'][8:10])
+        day = (30 - date) + 30 * (12 - month) + 365 * (2017 - year)
+        data[i]['date_recorded'] = day
+        if float(data[i]['gps_height']) == 0:
+            data[i]['gps_height'] = 1016.97
+        if float(data[i]['longitude']) == 0:
+            data[i]['longitude'] = 35.15
+        if float(data[i]['latitude']) > -0.1:
+            data[i]['latitude'] = -5.88
+        if float(data[i]['construction_year']) == 0:
+            data[i]['construction_year'] = 1997
+        if float(data[i]['construction_year']) >= 1960:
+            data[i]['construction_year'] = float(data[i]['construction_year']) - 1960
+
+    # Normalization
+    tmp = [[data[i][feature] for feature in continuous_features]
+           for i in range(data_size)]
+    tmp = np.array(tmp, dtype=float)
+    mean = np.mean(tmp, axis=0)
+    std = np.std(tmp, axis=0)
+    # This array can be then concatenate with one-hot encoded discrete data
+    norm_data = (tmp - mean) / std
+    value = norm_data
+    # value = tmp
+
+    # Other Feature is discrete and should be dealed with one-hot encoding
+    discrete_features = ['funder', 'basin', 'lga', 'public_meeting', 'scheme_management',
+                         'permit', 'extraction_type_class', 'management', 'payment',
+                         'quality_group', 'quantity', 'source', 'source_class',
+                         'waterpoint_type']
+
+    for feature in discrete_features:
+        # Temp is a list of dictionary. Each dictionary only contains 1 kind of feature
+        tmp = [{feature: data[i][feature]} for i in range(data_size)]
+        vec = DictVectorizer()
+        # Can be concatenate to value, not yet concatenate
+        data_array = vec.fit_transform(tmp).toarray()
+        # Single integer to represent discrete features
+        value = np.append(value, data_array.argmax(axis=1).reshape((data_array.shape[0], 1)), axis=1)
+        # One hot vector to represent discrete features
+        # value = np.append(value, data_array, axis=1)
+        # Can be concatenate to the feature labels
+        data_feature = vec.get_feature_names()
+        # print('The size of {}: '.format(feature), end='')
+        # print(data_array.shape)
+
+    if label_path:
+        return value, label
+    else:
+        return value, np.array(id_value)
 
 def main():
     """ Main function """

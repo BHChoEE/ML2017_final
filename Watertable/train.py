@@ -177,11 +177,11 @@ def main():
     train_label = train_label[indices]
     nb_validation_samples = int(VALIDATION_SPLIT * train_data.shape[0])
 
-    x_train = train_data[:-nb_validation_samples]
-    y_train = train_label[:-nb_validation_samples]
+    # x_train = train_data[:-nb_validation_samples]
+    # y_train = train_label[:-nb_validation_samples]
     # Use all training data
-    # x_train = train_data
-    # y_train = train_label
+    x_train = train_data
+    y_train = train_label
     x_val = train_data[-nb_validation_samples:]
     y_val = train_label[-nb_validation_samples:]
 
