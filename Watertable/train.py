@@ -142,13 +142,13 @@ def main():
 
     data, train_label = read_dataset(os.path.join(BASE_DIR, 'data/values.csv'),
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
-
-    if args.heatmap:
-        feature_list = ['amount_tsh', 'date_recorded', 'gps_height', 'longitude',
+    feature_list = ['amount_tsh', 'date_recorded', 'gps_height', 'longitude',
                                'latitude', 'population', 'construction_year',
                                'funder', 'basin', 'lga', 'public_meeting', 'scheme_management',
                              'permit', 'extraction_type_class', 'management', 'payment',
                              'quality_group', 'quantity', 'source', 'source_class','waterpoint_type']
+        
+    if args.heatmap:
         
         construct = [(feature_list[i],data[:,i]) for i in range(len(feature_list))]
         plot_data = pd.DataFrame.from_items(construct)
@@ -185,12 +185,20 @@ def main():
     x_val = train_data[-nb_validation_samples:]
     y_val = train_label[-nb_validation_samples:]
 
-    elif args.random:
+    if args.random:
         clf = RandomForestClassifier(min_samples_split=8,
                                      n_estimators=1000,
                                      oob_score=True,
                                      n_jobs=-1)
         clf.fit(x_train, y_train)
+        importances = clf.feature_importances_
+        fig,ax = plt.subplots(figsize = (30,15))
+        plt.title("Feature importances")
+        ax.barh(np.arange(x_train.shape[1]), importances, 0.75,color="b", align="center")
+        plt.yticks(np.arange(x_train.shape[1]),feature_list[::-1])
+        #plt.show()
+        fig.savefig('fi.png',dpi = 200)
+
         train_ans = clf.predict(x_train)
         val_ans = clf.predict(x_val)
         with open('./model/clf.pkl', 'wb') as clf_file:
@@ -199,6 +207,33 @@ def main():
         print("Training accuracy: {:f}".format(accuracy_score(y_train, train_ans)))
         print("Validation accuracy: {:f}".format(accuracy_score(y_val, val_ans)))
     elif args.xgb:
+        
+        def get_xgb_feat_importances(clf,features):
+            with open('xgb.fmap','w') as f:
+                for i, feat in enumerate(features):
+                    f.write('{0}\t{1}\tq\n'.format(i, feat))
+
+            if isinstance(clf, xgb.XGBModel):
+                # clf has been created by calling
+                # xgb.XGBClassifier.fit() or xgb.XGBRegressor().fit()
+                fscore = clf.booster().get_fscore()
+            else:
+                # clf has been created by calling xgb.train.
+                # Thus, clf is an instance of xgb.Booster.
+                fscore = clf.get_fscore(fmap = 'xgb.fmap')
+
+            feat_importances = []
+            for ft, score in fscore.items():
+                feat_importances.append({'Feature': ft, 'Importance': score})
+            feat_importances = pd.DataFrame(feat_importances)
+            # Divide the importances by the sum of all importances
+            # to get relative importances. By using relative importances
+            # the sum of all importances will equal to 1, i.e.,
+            # np.sum(feat_importances['importance']) == 1
+            feat_importances['Importance'] /= feat_importances['Importance'].sum()
+            # Print the most important features and their importances
+            return feat_importances
+
         xgb_params = {
             'objective': 'multi:softmax',
             'booster': 'gbtree',
@@ -212,12 +247,20 @@ def main():
         dtrain = xgb.DMatrix(data=x_train, label=y_train)
         dxtrain = xgb.DMatrix(x_train)
         dval = xgb.DMatrix(x_val)
-        for i in range(21):
+        for i in range(1):
             # cv_model = xgb.cv(dict(xgb_params), dtrain, num_boost_round=500, early_stopping_rounds=10, nfold=4, seed=i)
             # min_idx = np.argmin(cv_model['test-merror-mean']) + 1
             # model = xgb.train(dict(xgb_params), dtrain, num_boost_round=min_idx)
             model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1200)
             model.save_model("xgb.model_{:d}".format(i))
+            importances = get_xgb_feat_importances(model,feature_list)
+            print(importances)
+            fig,ax = plt.subplots(figsize = (30,15))
+            plt.title("Feature importances")
+            ax.barh(np.arange(len(importances)), importances['Importance'], 0.75,color="b", align="center")
+            plt.yticks(np.arange(len(importances)),importances['Feature'])
+            fig.savefig('fscore_{}.png'.format(i),dpi = 100)
+
             if i == 0:
                 train_ans = model.predict(dxtrain).reshape(x_train.shape[0], 1)
                 val_ans = model.predict(dval).reshape(x_val.shape[0], 1)
