@@ -8,6 +8,7 @@ Training Part
 import os
 import csv
 import pickle
+import pandas as pd
 from argparse import ArgumentParser
 import numpy as np
 from sklearn.feature_extraction import DictVectorizer
@@ -18,6 +19,8 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout
 from keras.callbacks import ModelCheckpoint
 import xgboost as xgb
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 np.random.seed(0)
 
@@ -134,10 +137,37 @@ def main():
     parser.add_argument('--random', action='store_true', help='Use Random Forest model')
     parser.add_argument('--xgb', action='store_true', help='Use XGBoost model')
     parser.add_argument('--ensemble', action='store_true', help='Use ensemble model')
+    parser.add_argument('--heatmap', action='store_true', help='Plot the corr heat map')
     args = parser.parse_args()
 
     data, train_label = read_dataset(os.path.join(BASE_DIR, 'data/values.csv'),
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
+    feature_list = ['amount_tsh', 'date_recorded', 'gps_height', 'longitude',
+                               'latitude', 'population', 'construction_year',
+                               'funder', 'basin', 'lga', 'public_meeting', 'scheme_management',
+                             'permit', 'extraction_type_class', 'management', 'payment',
+                             'quality_group', 'quantity', 'source', 'source_class','waterpoint_type']
+        
+    if args.heatmap:
+        
+        construct = [(feature_list[i],data[:,i]) for i in range(len(feature_list))]
+        plot_data = pd.DataFrame.from_items(construct)
+        label = pd.DataFrame({'status_group':train_label})        
+    
+        plot_data = pd.concat([plot_data,label],axis = 1)
+        colormap = plt.cm.viridis
+        
+        fig,ax = plt.subplots(figsize=(12,12))
+        plt.title('Correlation coefficient map of Features', y=1.05, size=30)
+        sns.heatmap(plot_data.corr().round(3),linewidths=0.1,vmax=1.0, square=True,annot_kws={"size":8}
+            , cmap=colormap, linecolor='white', annot=True,ax = ax)
+        ax.set_xticklabels(plot_data.columns,rotation=90)
+        ax.set_yticklabels(plot_data.columns[::-1],rotation=0)
+        plt.tight_layout()
+        #plt.show()
+        fig.savefig('feature_heatmap.png',dpi = 300)
+
+    
     train_data = data[:59400]
     print(train_data.shape)
     if not args.random and not args.xgb and not args.ensemble:
@@ -161,6 +191,14 @@ def main():
                                      oob_score=True,
                                      n_jobs=-1)
         clf.fit(x_train, y_train)
+        importances = clf.feature_importances_
+        fig,ax = plt.subplots(figsize = (30,15))
+        plt.title("Feature importances")
+        ax.barh(np.arange(x_train.shape[1]), importances, 0.75,color="b", align="center")
+        plt.yticks(np.arange(x_train.shape[1]),feature_list[::-1])
+        #plt.show()
+        fig.savefig('fi.png',dpi = 200)
+
         train_ans = clf.predict(x_train)
         val_ans = clf.predict(x_val)
         with open('./model/clf.pkl', 'wb') as clf_file:
@@ -169,6 +207,33 @@ def main():
         print("Training accuracy: {:f}".format(accuracy_score(y_train, train_ans)))
         print("Validation accuracy: {:f}".format(accuracy_score(y_val, val_ans)))
     elif args.xgb:
+        
+        def get_xgb_feat_importances(clf,features):
+            with open('xgb.fmap','w') as f:
+                for i, feat in enumerate(features):
+                    f.write('{0}\t{1}\tq\n'.format(i, feat))
+
+            if isinstance(clf, xgb.XGBModel):
+                # clf has been created by calling
+                # xgb.XGBClassifier.fit() or xgb.XGBRegressor().fit()
+                fscore = clf.booster().get_fscore()
+            else:
+                # clf has been created by calling xgb.train.
+                # Thus, clf is an instance of xgb.Booster.
+                fscore = clf.get_fscore(fmap = 'xgb.fmap')
+
+            feat_importances = []
+            for ft, score in fscore.items():
+                feat_importances.append({'Feature': ft, 'Importance': score})
+            feat_importances = pd.DataFrame(feat_importances)
+            # Divide the importances by the sum of all importances
+            # to get relative importances. By using relative importances
+            # the sum of all importances will equal to 1, i.e.,
+            # np.sum(feat_importances['importance']) == 1
+            feat_importances['Importance'] /= feat_importances['Importance'].sum()
+            # Print the most important features and their importances
+            return feat_importances
+
         xgb_params = {
             'objective': 'multi:softmax',
             'booster': 'gbtree',
@@ -183,8 +248,16 @@ def main():
         dxtrain = xgb.DMatrix(x_train)
         dval = xgb.DMatrix(x_val)
         for i in range(11):
-            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1181)
+            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1200)
             model.save_model("xgb.model_{:d}".format(i))
+            importances = get_xgb_feat_importances(model,feature_list)
+            print(importances)
+            fig,ax = plt.subplots(figsize = (30,15))
+            plt.title("Feature importances")
+            ax.barh(np.arange(len(importances)), importances['Importance'], 0.75,color="b", align="center")
+            plt.yticks(np.arange(len(importances)),importances['Feature'])
+            fig.savefig('fscore_{}.png'.format(i),dpi = 100)
+
             if i == 0:
                 train_ans = model.predict(dxtrain).reshape(x_train.shape[0], 1)
                 val_ans = model.predict(dval).reshape(x_val.shape[0], 1)
@@ -278,7 +351,7 @@ def main():
                   batch_size=128,
                   validation_data=(x_val, y_val),
                   callbacks=callbacks_list)
-
+    
 if __name__ == '__main__':
 
     main()
