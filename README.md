@@ -3,5 +3,6 @@ ML2017 Final
 
 ## Test
 
-    cd Watertable  
+    cd Watertable
+    pip install -r requirements.txt
     bash test.sh
