@@ -17,7 +17,8 @@ from sklearn.metrics import accuracy_score
 from keras.utils import to_categorical
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
-from keras.callbacks import ModelCheckpoint
+from keras.layers.normalization import BatchNormalization
+from keras.callbacks import ModelCheckpoint, EarlyStopping
 import xgboost as xgb
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -25,7 +26,7 @@ import matplotlib.pyplot as plt
 np.random.seed(0)
 
 VALIDATION_SPLIT = 0.1
-DROPOUT_RATE = 0.3
+DROPOUT_RATE = 0.5
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, 'model')
@@ -334,8 +335,16 @@ def main():
         model = Sequential()
         model.add(Dense(256, activation='relu', input_dim=x_train.shape[1]))
         model.add(Dropout(DROPOUT_RATE))
+        model.add(BatchNormalization())
         model.add(Dense(256, activation='relu'))
         model.add(Dropout(DROPOUT_RATE))
+        model.add(BatchNormalization())
+        model.add(Dense(512, activation='relu'))
+        model.add(Dropout(DROPOUT_RATE))
+        model.add(BatchNormalization())
+        model.add(Dense(512, activation='relu'))
+        model.add(Dropout(DROPOUT_RATE))
+        model.add(BatchNormalization())
         model.add(Dense(y_train.shape[1], activation='softmax'))
         model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
