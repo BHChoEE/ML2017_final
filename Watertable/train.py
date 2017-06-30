@@ -133,13 +133,14 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--random', action='store_true', help='Use Random Forest model')
     parser.add_argument('--xgb', action='store_true', help='Use XGBoost model')
+    parser.add_argument('--ensemble', action='store_true', help='Use ensemble model')
     args = parser.parse_args()
 
     data, train_label = read_dataset(os.path.join(BASE_DIR, 'data/values.csv'),
                                      os.path.join(BASE_DIR, 'data/train_labels.csv'))
     train_data = data[:59400]
     print(train_data.shape)
-    if not args.random and not args.xgb:
+    if not args.random and not args.xgb and not args.ensemble:
         train_label = to_categorical(train_label)
     indices = np.random.permutation(train_data.shape[0])
     train_data = train_data[indices]
@@ -181,11 +182,8 @@ def main():
         dtrain = xgb.DMatrix(data=x_train, label=y_train)
         dxtrain = xgb.DMatrix(x_train)
         dval = xgb.DMatrix(x_val)
-        for i in range(21):
-            # cv_model = xgb.cv(dict(xgb_params), dtrain, num_boost_round=500, early_stopping_rounds=10, nfold=4, seed=i)
-            # min_idx = np.argmin(cv_model['test-merror-mean']) + 1
-            # model = xgb.train(dict(xgb_params), dtrain, num_boost_round=min_idx)
-            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1200)
+        for i in range(11):
+            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1181)
             model.save_model("xgb.model_{:d}".format(i))
             if i == 0:
                 train_ans = model.predict(dxtrain).reshape(x_train.shape[0], 1)
@@ -193,6 +191,59 @@ def main():
             else:
                 train_ans = np.append(train_ans, model.predict(dxtrain).reshape(x_train.shape[0], 1), axis=1)
                 val_ans = np.append(val_ans, model.predict(dval).reshape(x_val.shape[0], 1), axis=1)
+
+        for idx, arr in enumerate(train_ans):
+            tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
+            train_ans[idx] = tmp.argmax()
+
+        for idx, arr in enumerate(val_ans):
+            tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
+            val_ans[idx] = tmp.argmax()
+
+        train_ans = train_ans[:, 0]
+        val_ans = val_ans[:, 0]
+        print("Training accuracy: {:f}".format(accuracy_score(y_train, train_ans)))
+        print("Validation accuracy: {:f}".format(accuracy_score(y_val, val_ans)))
+    elif args.ensemble:
+        n_estimators = [300, 500, 300, 300, 1500]
+        rf_max_depth = [24, 25, 26, 27, None]
+        for i in range(5):
+            clf = RandomForestClassifier(min_samples_split=8,
+                                         n_estimators=n_estimators[i],
+                                         max_depth=rf_max_depth[i],
+                                         oob_score=True,
+                                         n_jobs=-1)
+            clf.fit(x_train, y_train)
+            if i == 0:
+                train_ans = clf.predict(x_train).reshape(x_train.shape[0], 1)
+                val_ans = clf.predict(x_val).reshape(x_val.shape[0], 1)
+            else:
+                tmp_train_ans = clf.predict(x_train)
+                tmp_val_ans = clf.predict(x_val)
+                train_ans = np.append(train_ans, tmp_train_ans.reshape(x_train.shape[0], 1), axis=1)
+                val_ans = np.append(val_ans, tmp_val_ans.reshape(x_val.shape[0], 1), axis=1)
+            with open("./model/rf_{:d}.pkl".format(i), 'wb') as clf_file:
+                pickle.dump(clf, clf_file)
+
+        dtrain = xgb.DMatrix(data=x_train, label=y_train)
+        dxtrain = xgb.DMatrix(x_train)
+        dval = xgb.DMatrix(x_val)
+        xgb_max_depth = [4, 7, 32, 32, 48]
+        for i in range(5):
+            xgb_params = {
+                'objective': 'multi:softmax',
+                'booster': 'gbtree',
+                'eval_metric': 'merror',
+                'num_class': 3,
+                'learning_rate': .1,
+                'max_depth': xgb_max_depth[i],
+                'colsample_bytree': .4,
+                'colsample_bylevel': .4
+            }
+            model = xgb.train(dict(xgb_params, seed=i), dtrain, num_boost_round=1181)
+            model.save_model("./model/xgb.model_{:d}".format(i))
+            train_ans = np.append(train_ans, model.predict(dxtrain).reshape(x_train.shape[0], 1), axis=1)
+            val_ans = np.append(val_ans, model.predict(dval).reshape(x_val.shape[0], 1), axis=1)
 
         for idx, arr in enumerate(train_ans):
             tmp = np.array([np.where(arr == 0)[0].shape[0], np.where(arr == 1)[0].shape[0], np.where(arr == 2)[0].shape[0]])
